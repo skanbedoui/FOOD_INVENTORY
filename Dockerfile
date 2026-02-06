@@ -12,7 +12,7 @@ RUN npm ci --production
 COPY . .
 
 # Expose ports
-EXPOSE 3000 3001
+EXPOSE 3000
 
 # Start server
 CMD ["npm", "start"]

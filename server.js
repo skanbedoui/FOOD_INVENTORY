@@ -3,10 +3,11 @@ const WebSocket = require('ws');
 const http = require('http');
 const os = require('os');
 const path = require('path');
+require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocket.Server({ server, port: 3001 });
+const wss = new WebSocket.Server({ server });
 
 // Get local IP address
 function getLocalIP() {
@@ -80,15 +81,19 @@ wss.on('connection', (ws, req) => {
 
 // HTTP server
 const PORT = process.env.PORT || 3000;
+const EXTERNAL_URL = process.env.EXTERNAL_URL;
+
 server.listen(PORT, () => {
   const localIP = getLocalIP();
   console.log('\n🚀 Food Inventory Sync Server Started');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log(`📱 Local URL:     http://localhost:${PORT}`);
-  console.log(`🌐 Network URL:   http://${localIP}:${PORT}`);
-  console.log(`📡 WebSocket:     ws://${localIP}:3001`);
+  console.log(`🌐 Local Network: http://${localIP}:${PORT}`);
+  if (EXTERNAL_URL) {
+    console.log(`🌍 External URL:  ${EXTERNAL_URL}`);
+  }
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('\n💡 Tip: Open multiple tabs/windows or devices at the network URL');
+  console.log('\n💡 Tip: Open multiple tabs/windows or devices at the URL above');
   console.log('✅ All changes will sync in real-time!\n');
 });
 

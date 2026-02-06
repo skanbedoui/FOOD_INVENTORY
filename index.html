@@ -104,11 +104,10 @@
     // 🌐 LIVE UPDATES: WebSocket connection (cross-device sync)
     function connectWebSocket() {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.hostname;
-      const port = window.location.port || (protocol === 'wss:' ? 443 : 80);
+      const host = window.location.host;  // Includes hostname:port
       
       try {
-        wsConnection = new WebSocket(`${protocol}//${host}:3001`);
+        wsConnection = new WebSocket(`${protocol}//${host}`);
         
         wsConnection.onopen = () => {
           console.log('✅ Connected to sync server');

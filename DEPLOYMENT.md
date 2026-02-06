@@ -52,7 +52,6 @@ You'll see:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📱 Local URL:     http://localhost:3000
 🌐 Network URL:   http://192.168.X.X:3000      ← Use this!
-📡 WebSocket:     ws://192.168.X.X:3001
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
