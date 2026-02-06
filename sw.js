@@ -1,4 +1,4 @@
-const CACHE_NAME = 'inventory-pwa-v2';
+const CACHE_NAME = 'inventory-pwa-v3';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -28,6 +28,11 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const request = event.request;
 
+  // Don't cache WebSocket upgrade requests
+  if (request.url.includes('ws://') || request.url.includes('wss://')) {
+    return;
+  }
+
   // Always try network first for navigation requests (SPA / index.html)
   if (request.mode === 'navigate' || request.url.endsWith('/index.html')) {
     event.respondWith(
@@ -46,3 +51,4 @@ self.addEventListener('fetch', event => {
     caches.match(request).then(response => response || fetch(request))
   );
 });
+

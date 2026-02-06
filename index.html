@@ -79,9 +79,80 @@
     let isScanning = false;
     let quagga = null;
     let scanCooldown = false;
+    let broadcastChannel = null;
+    let wsConnection = null;
+
+    // 🔄 LIVE UPDATES: Broadcast Channel API (syncs between tabs/windows)
+    function initBroadcastChannel() {
+      try {
+        broadcastChannel = new BroadcastChannel('food-inventory');
+        broadcastChannel.onmessage = (event) => {
+          const { type, data } = event.data;
+          if (type === 'inventory-update') {
+            inventory = data;
+            renderInventory();
+            updateStatus('🔄 Synced with other tab');
+            setTimeout(() => updateStatus('Ready! Works with real grocery products'), 2000);
+          }
+        };
+        console.log('✅ Broadcast Channel ready - tabs will sync automatically');
+      } catch (error) {
+        console.log('Broadcast Channel not supported');
+      }
+    }
+
+    // 🌐 LIVE UPDATES: WebSocket connection (cross-device sync)
+    function connectWebSocket() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.hostname;
+      const port = window.location.port || (protocol === 'wss:' ? 443 : 80);
+      
+      try {
+        wsConnection = new WebSocket(`${protocol}//${host}:3001`);
+        
+        wsConnection.onopen = () => {
+          console.log('✅ Connected to sync server');
+          updateStatus('🔗 Connected to live sync');
+          // Send current inventory to server
+          wsConnection.send(JSON.stringify({ type: 'sync', data: inventory }));
+        };
+        
+        wsConnection.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            if (message.type === 'update') {
+              inventory = message.data;
+              localStorage.setItem('foodInventory', JSON.stringify(inventory));
+              renderInventory();
+              // Broadcast to other tabs
+              if (broadcastChannel) {
+                broadcastChannel.postMessage({ type: 'inventory-update', data: inventory });
+              }
+              updateStatus('🔄 Synced from another device');
+              setTimeout(() => updateStatus('Ready! Works with real grocery products'), 2000);
+            }
+          } catch (e) {
+            console.log('Invalid message format');
+          }
+        };
+        
+        wsConnection.onerror = () => {
+          console.log('⚠️ Sync server unavailable (local mode only)');
+        };
+        
+        wsConnection.onclose = () => {
+          console.log('Disconnected - retrying in 5s');
+          setTimeout(connectWebSocket, 5000);
+        };
+      } catch (error) {
+        console.log('WebSocket not available');
+      }
+    }
 
     // Initialize app
     document.addEventListener('DOMContentLoaded', function() {
+      initBroadcastChannel();
+      connectWebSocket();
       renderInventory();
       updateStatus('Ready! Works with real grocery products (Open Food Facts 2M+ database)');
     });
@@ -272,6 +343,16 @@
 
     function saveInventory() {
       localStorage.setItem('foodInventory', JSON.stringify(inventory));
+      
+      // 🔄 Broadcast to other tabs
+      if (broadcastChannel) {
+        broadcastChannel.postMessage({ type: 'inventory-update', data: inventory });
+      }
+      
+      // 🌐 Send to WebSocket server
+      if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+        wsConnection.send(JSON.stringify({ type: 'update', data: inventory }));
+      }
     }
 
     function exportData() {
