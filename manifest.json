@@ -1,0 +1,16 @@
+{
+  "name": "P2P Inventory Scanner",
+  "short_name": "InvScan",
+  "description": "Barcode inventory tracker with P2P sync",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f5f5",
+  "theme_color": "#2196F3",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}
