@@ -104,40 +104,42 @@ function getLocalIP() {
 app.use(express.static(path.join(__dirname)));
 
 // Health check endpoint (important for Railway)
+// Health check endpoint (important for Railway)
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+  res.json({
+    status: 'ok',
     mongodb: dbConnected ? 'connected' : 'disconnected',
     timestamp: new Date().toISOString()
-  // API endpoint to get current inventory from database
-  app.get('/api/inventory', async (req, res) => {
-    try {
-      const result = await Inventory.findOne({});
-      if (!result) {
-        return res.json({
-          status: 'empty',
-          items: [],
-          mongodb: dbConnected ? 'connected' : 'disconnected',
-          message: 'No inventory saved yet'
-        });
-      }
-    
-      res.json({
-        status: 'success',
-        items: result.items,
-        count: result.items.length,
-        lastUpdated: result.updatedAt,
-        mongodb: dbConnected ? 'connected' : 'disconnected'
-      });
-    } catch (error) {
-      res.status(500).json({
-        status: 'error',
-        error: error.message,
-        mongodb: dbConnected ? 'connected' : 'disconnected'
+  });
+});
+
+// API endpoint to get current inventory from database
+app.get('/api/inventory', async (req, res) => {
+  try {
+    const result = await Inventory.findOne({});
+    if (!result) {
+      return res.json({
+        status: 'empty',
+        items: [],
+        mongodb: dbConnected ? 'connected' : 'disconnected',
+        message: 'No inventory saved yet'
       });
     }
-  });
-  });
+
+    res.json({
+      status: 'success',
+      items: result.items,
+      count: result.items.length,
+      lastUpdated: result.updatedAt,
+      mongodb: dbConnected ? 'connected' : 'disconnected'
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      error: error.message,
+      mongodb: dbConnected ? 'connected' : 'disconnected'
+    });
+  }
 });
 
 // Current inventory state (will load from DB)
