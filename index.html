@@ -186,6 +186,20 @@
       };
     }
 
+    // Call server-side classifier as fallback to get category/weight
+    async function classifyLocal({ barcode, name } = {}) {
+      try {
+        const params = new URLSearchParams();
+        if (barcode) params.append('barcode', barcode);
+        if (name) params.append('name', name);
+        const res = await fetch('/api/classify?' + params.toString());
+        if (!res.ok) throw new Error('classify failed');
+        return await res.json();
+      } catch (e) {
+        return null;
+      }
+    }
+
     function startScanner() {
       if (isScanning) return;
       
@@ -255,7 +269,8 @@
       // Lookup product
       const productInfo = await lookupProduct(code);
       
-      // Update inventory
+      // Update inventory with classification
+      const classification = await classifyLocal({ barcode: code, name: productInfo.name });
       let existing = inventory.find(item => item.barcode === code);
       if (existing) {
         existing.quantity += 1;
@@ -264,10 +279,15 @@
         inventory.push({
           barcode: code,
           name: productInfo.name,
-          brand: productInfo.brand,
+          // Do not show brand per user request
+          brand: '',
           quantity: 1,
           lastUpdated: Date.now(),
-          nutrition: productInfo.nutrition
+          nutrition: productInfo.nutrition,
+          category: classification?.category || 'other',
+          weightGrams: classification?.weight?.grams || null,
+          weightRaw: classification?.weight?.raw || null,
+          classificationSource: classification?.source || null
         });
       }
       
@@ -288,22 +308,42 @@
         return;
       }
       
-      list.innerHTML = inventory
-        .sort((a, b) => b.lastUpdated - a.lastUpdated)
-        .map(item => `
-          <div class="item">
-            <div class="item-info">
-              <div class="item-name">${item.name}</div>
-              ${item.brand ? `<div class="item-brand">${item.brand}</div>` : ''}
-              <div class="item-barcode">${item.barcode}</div>
+      // Group items by category
+      const groups = {};
+      inventory.forEach(item => {
+        const cat = item.category || 'other';
+        groups[cat] = groups[cat] || [];
+        groups[cat].push(item);
+      });
+
+      // Render groups: sort categories alphabetically, items by lastUpdated
+      const html = Object.keys(groups).sort().map(cat => {
+        const itemsHtml = groups[cat]
+          .sort((a,b) => b.lastUpdated - a.lastUpdated)
+          .map(item => `
+            <div class="item">
+              <div class="item-info">
+                <div class="item-name">${item.name}</div>
+                <div class="item-barcode">${item.barcode}</div>
+                ${item.weightRaw ? `<div style="font-size:13px;color:#666;margin-top:4px;">${item.weightRaw}</div>` : ''}
+              </div>
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <button class="btn btn-danger" onclick="updateQuantity('${item.barcode}', -1)">−</button>
+                <div class="item-quantity">${item.quantity}</div>
+                <button class="btn btn-success" onclick="updateQuantity('${item.barcode}', 1)">+</button>
+              </div>
             </div>
-            <div style="display: flex; align-items: center; gap: 12px;">
-              <button class="btn btn-danger" onclick="updateQuantity('${item.barcode}', -1)">−</button>
-              <div class="item-quantity">${item.quantity}</div>
-              <button class="btn btn-success" onclick="updateQuantity('${item.barcode}', 1)">+</button>
-            </div>
+          `).join('');
+
+        return `
+          <div style="padding:12px 16px;">
+            <h3 style="margin-bottom:8px; text-transform:capitalize;">${cat.replace(/_/g,' ')}</h3>
+            <div style="background:white; border-radius:12px; overflow:hidden;">${itemsHtml}</div>
           </div>
-        `).join('');
+        `;
+      }).join('');
+
+      list.innerHTML = html;
     }
 
     function updateQuantity(barcode, delta) {
@@ -356,9 +396,9 @@
 
     function exportData() {
       if (inventory.length === 0) return alert('No products!');
-      const csv = ['Barcode,Product,Brand,Quantity,Nutrition\n']
+      const csv = ['Barcode,Product,Category,WeightGrams,Quantity,Nutrition\n']
         .concat(inventory.map(item => 
-          `"${item.barcode}","${item.name.replace(/"/g,'""')}","${item.brand.replace(/"/g,'""')}",${item.quantity},"${item.nutrition}"`
+          `"${item.barcode}","${item.name.replace(/"/g,'""')}","${(item.category||'').replace(/"/g,'""')}","${item.weightGrams||''}",${item.quantity},"${item.nutrition}"
         )).join('\n');
       
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });

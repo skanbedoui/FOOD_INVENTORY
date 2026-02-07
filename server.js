@@ -4,6 +4,7 @@ const http = require('http');
 const os = require('os');
 const path = require('path');
 const mongoose = require('mongoose');
+const { classifyItem } = require('./lib/classifier');
 require('dotenv').config();
 
 const app = express();
@@ -41,6 +42,11 @@ const inventorySchema = new mongoose.Schema({
       name: String,
       brand: String,
       quantity: Number,
+      category: String,
+      weightGrams: Number,
+      weightRaw: String,
+      classificationSource: String,
+      classifiedAt: Date,
       timestamp: { type: Date, default: Date.now }
     }
   ],
@@ -72,9 +78,25 @@ async function saveInventoryToDB(items) {
   }
   
   try {
+    // Enrich items with classification information
+    const enriched = await Promise.all(items.map(async (it) => {
+      try {
+        const c = await classifyItem(it);
+        return Object.assign({}, it, {
+          category: c.category,
+          weightGrams: c.weight?.grams ?? (it.weightGrams || null),
+          weightRaw: c.weight?.raw ?? (it.weightRaw || null),
+          classificationSource: c.source,
+          classifiedAt: new Date()
+        });
+      } catch (e) {
+        return it;
+      }
+    }));
+
     const result = await Inventory.updateOne(
-      {}, 
-      { items, updatedAt: new Date() }, 
+      {},
+      { items: enriched, updatedAt: new Date() },
       { upsert: true, new: true }
     );
     console.log(`💾 Inventory SAVED to MongoDB (${items.length} items) ✅`);
@@ -237,6 +259,18 @@ async function startServer() {
     console.log('✅ All changes will sync in real-time!\n');
   });
 }
+
+// Classification endpoint: query by barcode or name
+app.get('/api/classify', async (req, res) => {
+  try {
+    const { barcode, name } = req.query;
+    if (!barcode && !name) return res.status(400).json({ error: 'Provide barcode or name query parameter' });
+    const result = await classifyItem({ barcode, name });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 startServer();
 
