@@ -3,11 +3,76 @@ const WebSocket = require('ws');
 const http = require('http');
 const os = require('os');
 const path = require('path');
+const mongoose = require('mongoose');
 require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
+
+// MongoDB Connection
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/food-inventory';
+
+// Connect to MongoDB with retry logic for production
+let dbConnected = false;
+const connectMongoDB = async () => {
+  try {
+    await mongoose.connect(MONGODB_URI, {
+      serverSelectionTimeoutMS: 10000,
+      retryWrites: true,
+    });
+    dbConnected = true;
+    console.log('✅ Connected to MongoDB');
+  } catch (err) {
+    console.error('❌ MongoDB connection error:', err.message);
+    console.log('⚠️ Retrying in 5 seconds...');
+    setTimeout(connectMongoDB, 5000);
+  }
+};
+
+// Start MongoDB connection immediately
+connectMongoDB();
+
+// Inventory Schema
+const inventorySchema = new mongoose.Schema({
+  items: [
+    {
+      barcode: String,
+      name: String,
+      brand: String,
+      quantity: Number,
+      timestamp: { type: Date, default: Date.now }
+    }
+  ],
+  updatedAt: { type: Date, default: Date.now }
+});
+
+const Inventory = mongoose.model('Inventory', inventorySchema);
+
+// Initialize or get existing inventory
+async function getInventoryFromDB() {
+  try {
+    let inventory = await Inventory.findOne({});
+    if (!inventory) {
+      inventory = new Inventory({ items: [] });
+      await inventory.save();
+    }
+    return inventory.items;
+  } catch (error) {
+    console.error('❌ Error fetching inventory:', error.message);
+    return [];
+  }
+}
+
+// Save inventory to database
+async function saveInventoryToDB(items) {
+  try {
+    await Inventory.updateOne({}, { items, updatedAt: new Date() }, { upsert: true });
+    console.log('💾 Inventory saved to MongoDB');
+  } catch (error) {
+    console.error('❌ Error saving inventory:', error.message);
+  }
+}
 
 // Get local IP address
 function getLocalIP() {
@@ -25,7 +90,16 @@ function getLocalIP() {
 // Serve static files
 app.use(express.static(path.join(__dirname)));
 
-// Current inventory state
+// Health check endpoint (important for Railway)
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    mongodb: dbConnected ? 'connected' : 'disconnected',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Current inventory state (will load from DB)
 let sharedInventory = [];
 
 // Store client information
@@ -47,12 +121,13 @@ wss.on('connection', (ws, req) => {
   }
 
   // Handle incoming messages
-  ws.on('message', (data) => {
+  ws.on('message', async (data) => {
     try {
       const message = JSON.parse(data);
 
       if (message.type === 'sync' || message.type === 'update') {
         sharedInventory = message.data;
+        await saveInventoryToDB(sharedInventory);
         console.log(`📦 Inventory updated: ${sharedInventory.length} items`);
 
         // Broadcast to all connected clients
@@ -83,19 +158,31 @@ wss.on('connection', (ws, req) => {
 const PORT = process.env.PORT || 3000;
 const EXTERNAL_URL = process.env.EXTERNAL_URL;
 
-server.listen(PORT, () => {
-  const localIP = getLocalIP();
-  console.log('\n🚀 Food Inventory Sync Server Started');
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log(`📱 Local URL:     http://localhost:${PORT}`);
-  console.log(`🌐 Local Network: http://${localIP}:${PORT}`);
-  if (EXTERNAL_URL) {
-    console.log(`🌍 External URL:  ${EXTERNAL_URL}`);
+// Start server after loading inventory from DB
+async function startServer() {
+  try {
+    sharedInventory = await getInventoryFromDB();
+    console.log(`✅ Loaded ${sharedInventory.length} items from MongoDB`);
+  } catch (error) {
+    console.error('❌ Error loading inventory:', error.message);
   }
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('\n💡 Tip: Open multiple tabs/windows or devices at the URL above');
-  console.log('✅ All changes will sync in real-time!\n');
-});
+
+  server.listen(PORT, () => {
+    const localIP = getLocalIP();
+    console.log('\n🚀 Food Inventory Sync Server Started');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log(`📱 Local URL:     http://localhost:${PORT}`);
+    console.log(`🌐 Local Network: http://${localIP}:${PORT}`);
+    if (EXTERNAL_URL) {
+      console.log(`🌍 External URL:  ${EXTERNAL_URL}`);
+    }
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('\n💡 Tip: Open multiple tabs/windows or devices at the URL above');
+    console.log('✅ All changes will sync in real-time!\n');
+  });
+}
+
+startServer();
 
 // Graceful shutdown
 process.on('SIGINT', () => {
