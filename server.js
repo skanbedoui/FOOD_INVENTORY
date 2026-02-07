@@ -64,13 +64,26 @@ async function getInventoryFromDB() {
   }
 }
 
-// Save inventory to database
+// Save inventory to database with better logging
 async function saveInventoryToDB(items) {
+  if (!dbConnected) {
+    console.warn('⚠️ MongoDB not connected - items saved in memory only');
+    return false;
+  }
+  
   try {
-    await Inventory.updateOne({}, { items, updatedAt: new Date() }, { upsert: true });
-    console.log('💾 Inventory saved to MongoDB');
+    const result = await Inventory.updateOne(
+      {}, 
+      { items, updatedAt: new Date() }, 
+      { upsert: true, new: true }
+    );
+    console.log(`💾 Inventory SAVED to MongoDB (${items.length} items) ✅`);
+    console.log(`   Timestamp: ${new Date().toISOString()}`);
+    console.log(`   Items: ${items.map(i => i.name).join(', ')}`);
+    return true;
   } catch (error) {
-    console.error('❌ Error saving inventory:', error.message);
+    console.error('❌ ERROR saving inventory:', error.message);
+    return false;
   }
 }
 
@@ -96,6 +109,34 @@ app.get('/health', (req, res) => {
     status: 'ok', 
     mongodb: dbConnected ? 'connected' : 'disconnected',
     timestamp: new Date().toISOString()
+  // API endpoint to get current inventory from database
+  app.get('/api/inventory', async (req, res) => {
+    try {
+      const result = await Inventory.findOne({});
+      if (!result) {
+        return res.json({
+          status: 'empty',
+          items: [],
+          mongodb: dbConnected ? 'connected' : 'disconnected',
+          message: 'No inventory saved yet'
+        });
+      }
+    
+      res.json({
+        status: 'success',
+        items: result.items,
+        count: result.items.length,
+        lastUpdated: result.updatedAt,
+        mongodb: dbConnected ? 'connected' : 'disconnected'
+      });
+    } catch (error) {
+      res.status(500).json({
+        status: 'error',
+        error: error.message,
+        mongodb: dbConnected ? 'connected' : 'disconnected'
+      });
+    }
+  });
   });
 });
 
@@ -127,13 +168,26 @@ wss.on('connection', (ws, req) => {
 
       if (message.type === 'sync' || message.type === 'update') {
         sharedInventory = message.data;
-        await saveInventoryToDB(sharedInventory);
-        console.log(`📦 Inventory updated: ${sharedInventory.length} items`);
+        const savedToDB = await saveInventoryToDB(sharedInventory);
+        
+        console.log(`📦 Received ${sharedInventory.length} items`);
+        if (savedToDB) {
+          console.log(`✅ Successfully saved to MongoDB database`);
+        } else {
+          console.log(`⚠️ Database connection issue - will save when reconnected`);
+        }
 
-        // Broadcast to all connected clients
+        // Broadcast to all connected clients with save status
+        const broadcastData = {
+          type: 'update',
+          data: sharedInventory,
+          savedToDB: savedToDB,
+          timestamp: new Date().toISOString()
+        };
+        
         wss.clients.forEach((client) => {
           if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({ type: 'update', data: sharedInventory }));
+            client.send(JSON.stringify(broadcastData));
           }
         });
       }
