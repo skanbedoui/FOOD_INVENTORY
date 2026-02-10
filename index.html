@@ -398,7 +398,7 @@
       if (inventory.length === 0) return alert('No products!');
       const csv = ['Barcode,Product,Category,WeightGrams,Quantity,Nutrition\n']
         .concat(inventory.map(item => 
-          `"${item.barcode}","${item.name.replace(/"/g,'""')}","${(item.category||'').replace(/"/g,'""')}","${item.weightGrams||''}",${item.quantity},"${item.nutrition}"
+          `"${item.barcode}","${item.name.replace(/"/g,'""')}","${(item.category||'').replace(/"/g,'""')}","${item.weightGrams||''}",${item.quantity},"${item.nutrition}"`
         )).join('\n');
       
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
