@@ -75,12 +75,80 @@
   <script src="https://cdn.jsdelivr.net/npm/quagga@0.12.1/dist/quagga.min.js"></script>
   <script>
     // Global state
-    let inventory = JSON.parse(localStorage.getItem('foodInventory')) || [];
+    let inventory = [];
     let isScanning = false;
     let quagga = null;
     let scanCooldown = false;
     let broadcastChannel = null;
     let wsConnection = null;
+    const ENABLE_WS_SYNC = window.location.protocol === 'http:' || window.location.protocol === 'https:';
+
+    // Local DB (IndexedDB) for offline storage
+    const DB_NAME = 'food-inventory';
+    const DB_VERSION = 1;
+    const DB_STORE = 'kv';
+    let dbPromise = null;
+
+    function openDb() {
+      if (dbPromise) return dbPromise;
+      dbPromise = new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onupgradeneeded = (event) => {
+          const db = event.target.result;
+          if (!db.objectStoreNames.contains(DB_STORE)) {
+            db.createObjectStore(DB_STORE, { keyPath: 'key' });
+          }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      return dbPromise;
+    }
+
+    async function dbGet(key) {
+      try {
+        const db = await openDb();
+        return await new Promise((resolve, reject) => {
+          const tx = db.transaction(DB_STORE, 'readonly');
+          const store = tx.objectStore(DB_STORE);
+          const req = store.get(key);
+          req.onsuccess = () => resolve(req.result ? req.result.value : null);
+          req.onerror = () => reject(req.error);
+        });
+      } catch (e) {
+        return null;
+      }
+    }
+
+    async function dbSet(key, value) {
+      try {
+        const db = await openDb();
+        return await new Promise((resolve, reject) => {
+          const tx = db.transaction(DB_STORE, 'readwrite');
+          const store = tx.objectStore(DB_STORE);
+          const req = store.put({ key, value });
+          req.onsuccess = () => resolve(true);
+          req.onerror = () => reject(req.error);
+        });
+      } catch (e) {
+        return false;
+      }
+    }
+
+    async function loadInventoryFromStorage() {
+      const data = await dbGet('inventory');
+      if (Array.isArray(data)) {
+        inventory = data;
+        return;
+      }
+      // Fallback to localStorage if IndexedDB is unavailable
+      inventory = JSON.parse(localStorage.getItem('foodInventory')) || [];
+    }
+
+    async function persistInventory() {
+      await dbSet('inventory', inventory);
+      localStorage.setItem('foodInventory', JSON.stringify(inventory));
+    }
 
     // 🔄 LIVE UPDATES: Broadcast Channel API (syncs between tabs/windows)
     function initBroadcastChannel() {
@@ -90,6 +158,7 @@
           const { type, data } = event.data;
           if (type === 'inventory-update') {
             inventory = data;
+            persistInventory();
             renderInventory();
             updateStatus('🔄 Synced with other tab');
             setTimeout(() => updateStatus('Ready! Works with real grocery products'), 2000);
@@ -103,6 +172,7 @@
 
     // 🌐 LIVE UPDATES: WebSocket connection (cross-device sync)
     function connectWebSocket() {
+      if (!ENABLE_WS_SYNC) return;
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.host;  // Includes hostname:port
       
@@ -121,7 +191,7 @@
             const message = JSON.parse(event.data);
             if (message.type === 'update') {
               inventory = message.data;
-              localStorage.setItem('foodInventory', JSON.stringify(inventory));
+              persistInventory();
               renderInventory();
               // Broadcast to other tabs
               if (broadcastChannel) {
@@ -152,8 +222,10 @@
     document.addEventListener('DOMContentLoaded', function() {
       initBroadcastChannel();
       connectWebSocket();
-      renderInventory();
-      updateStatus('Ready! Works with real grocery products (Open Food Facts 2M+ database)');
+      loadInventoryFromStorage().then(() => {
+        renderInventory();
+        updateStatus('Ready! Works with real grocery products (Open Food Facts 2M+ database)');
+      });
     });
 
     // Food product lookup API (FREE - Open Food Facts)
@@ -187,6 +259,45 @@
     }
 
     // Call server-side classifier as fallback to get category/weight
+    const CATEGORY_KEYWORDS = {
+      pasta: ['pasta','spaghetti','penne','macaroni','fusilli','vermicelli','tagliatelle','orzo'],
+      tomato_sauce: ['tomato sauce','sauce tomate','passata','concentre de tomate','puree de tomate','sauce aux tomates'],
+      harissa: ['harissa'],
+      tuna: ['tuna','thon','conserve de thon','thon en conserve'],
+      flour: ['flour','farine'],
+      semoule: ['semoule'],
+      chorba: ['chorba'],
+      couscous: ['couscous']
+    };
+
+    function normalizeName(s = '') {
+      return s.normalize?.('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    }
+
+    function extractWeight(name) {
+      if (!name) return null;
+      const m = name.match(/(\d+(?:[.,]\d+)?)\s?(kg|g|l|ml)\b/i);
+      if (!m) return null;
+      let value = parseFloat(m[1].replace(',', '.'));
+      const unit = m[2].toLowerCase();
+      let grams = null;
+      if (unit === 'kg') grams = Math.round(value * 1000);
+      else if (unit === 'g') grams = Math.round(value);
+      else if (unit === 'l') grams = Math.round(value * 1000);
+      else if (unit === 'ml') grams = Math.round(value);
+      return { grams, raw: m[0] };
+    }
+
+    function classifyFallback(name = '') {
+      const n = normalizeName(name);
+      for (const [cat, keys] of Object.entries(CATEGORY_KEYWORDS)) {
+        for (const k of keys) {
+          if (n.includes(k)) return cat;
+        }
+      }
+      return 'other';
+    }
+
     async function classifyLocal({ barcode, name } = {}) {
       try {
         const params = new URLSearchParams();
@@ -196,7 +307,7 @@
         if (!res.ok) throw new Error('classify failed');
         return await res.json();
       } catch (e) {
-        return null;
+        return { category: classifyFallback(name || ''), weight: extractWeight(name || ''), source: 'client' };
       }
     }
 
@@ -381,7 +492,7 @@
     }
 
     function saveInventory() {
-      localStorage.setItem('foodInventory', JSON.stringify(inventory));
+      persistInventory();
       
       // 🔄 Broadcast to other tabs
       if (broadcastChannel) {
