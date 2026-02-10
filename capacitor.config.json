@@ -1,0 +1,6 @@
+{
+  "appId": "lions.inventory",
+  "appName": "LionsInventory",
+  "webDir": ".",
+  "bundledWebRuntime": false
+}
